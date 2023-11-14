@@ -179,9 +179,10 @@ class Golang extends EventEmitter {
         // WebSocket connected - set server and emit ready
         this.server = server;
 
-        this.server.on("message", (data: string) => {
-          const message = JSON.parse(data);
-          this.emit(message.RequestID, message);
+        this.server.on("message", (data: Buffer) => {
+          console.log(data, data.toString());
+          // const message = JSON.parse(data);
+          // this.emit(message.RequestID, message);
         });
 
         this.emit("ready");
@@ -351,7 +352,7 @@ const initCycleTLS = async (
             | "patch" = "get"
         ): Promise<CycleTLSResponse> => {
           return new Promise((resolveRequest, rejectRequest) => {
-            const requestId = `${url}${Math.floor(Date.now() * Math.random())}`;
+            const requestId = `${url}#${Date.now()}-${Math.floor(1000 * Math.random())}`;
             //set default options
             options = options ?? {}
             

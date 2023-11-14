@@ -1,6 +1,7 @@
 package cycletls
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	http "github.com/Danny-Dasilva/fhttp"
@@ -42,28 +43,10 @@ type fullRequest struct {
 	options cycleTLSRequest
 }
 
-// Response contains Cycletls response data
-type Response struct {
-	RequestID string
-	Status    int
-	Body      string
-	Headers   map[string]string
-}
-
-// JSONBody converts response body to json
-func (re Response) JSONBody() map[string]interface{} {
-	var data map[string]interface{}
-	err := json.Unmarshal([]byte(re.Body), &data)
-	if err != nil {
-		log.Print("Json Conversion failed " + err.Error() + re.Body)
-	}
-	return data
-}
-
 // CycleTLS creates full request and response
 type CycleTLS struct {
 	ReqChan  chan fullRequest
-	RespChan chan Response
+	RespChan chan []byte
 }
 
 // ready Request
@@ -168,118 +151,100 @@ func processRequest(request cycleTLSRequest) (result fullRequest) {
 
 }
 
-func dispatcher(res fullRequest) (response Response, err error) {
+// func dispatcher(res fullRequest) {
+// 	defer res.client.CloseIdleConnections()
+
+// 	resp, err := res.client.Do(res.req)
+// 	if err != nil {
+
+// 		parsedError := parseError(err)
+
+// 		headers := make(map[string]string)
+// 		return Response{res.options.RequestID, parsedError.StatusCode, parsedError.ErrorMsg + "-> \n" + string(err.Error()), headers}, nil //normally return error here
+
+// 	}
+// 	defer resp.Body.Close()
+
+// 	encoding := resp.Header["Content-Encoding"]
+// 	content := resp.Header["Content-Type"]
+
+// 	bodyBytes, err := ioutil.ReadAll(resp.Body)
+// 	if err != nil {
+// 		log.Print("Parse Bytes" + err.Error())
+// 		return response, err
+// 	}
+
+// 	Body := DecompressBody(bodyBytes, encoding, content)
+// 	headers := make(map[string]string)
+
+// 	for name, values := range resp.Header {
+// 		if name == "Set-Cookie" {
+// 			headers[name] = strings.Join(values, "/,/")
+
+// 		} else {
+// 			for _, value := range values {
+// 				headers[name] = value
+// 			}
+// 		}
+// 	}
+
+// 	Response{res.options.RequestID, resp.StatusCode, Body, headers}
+// }
+
+
+func dispatcherAsync(res fullRequest, chanWrite chan []byte) {
 	defer res.client.CloseIdleConnections()
 
-	resp, err := res.client.Do(res.req)
-	if err != nil {
+	var b bytes.Buffer
 
-		parsedError := parseError(err)
+	b.Write([]byte(res.options.RequestID))
 
-		headers := make(map[string]string)
-		return Response{res.options.RequestID, parsedError.StatusCode, parsedError.ErrorMsg + "-> \n" + string(err.Error()), headers}, nil //normally return error here
+	chanWrite <- b.Bytes();
 
-	}
-	defer resp.Body.Close()
+	// @TODO: When does this trigger an error ?
+	// Are we sure that the parsedError will include headers and a satus code ?
+	// resp, err := res.client.Do(res.req)
 
-	encoding := resp.Header["Content-Encoding"]
-	content := resp.Header["Content-Type"]
+	// if err != nil {
 
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Print("Parse Bytes" + err.Error())
-		return response, err
-	}
+	// 	parsedError := parseError(err)
 
-	Body := DecompressBody(bodyBytes, encoding, content)
-	headers := make(map[string]string)
+	// 	headers := make(map[string]string)
 
-	for name, values := range resp.Header {
-		if name == "Set-Cookie" {
-			headers[name] = strings.Join(values, "/,/")
-		} else {
-			for _, value := range values {
-				headers[name] = value
-			}
-		}
-	}
-	return Response{res.options.RequestID, resp.StatusCode, Body, headers}, nil
+	// 	// return Response{res.options.RequestID, parsedError.StatusCode, parsedError.ErrorMsg + "-> \n" + string(err.Error()), headers}, nil //normally return error here
+	// 	return;
+	// }
 
+	// defer resp.Body.Close()
+
+	// encoding := resp.Header["Content-Encoding"]
+	// content := resp.Header["Content-Type"]
+
+	// bodyBytes, err := ioutil.ReadAll(resp.Body)
+	// if err != nil {
+	// 	log.Print("Parse Bytes" + err.Error())
+	// 	return response, err
+	// }
+
+	// Body := DecompressBody(bodyBytes, encoding, content)
+	// headers := make(map[string]string)
+
+	// for name, values := range resp.Header {
+	// 	if name == "Set-Cookie" {
+	// 		headers[name] = strings.Join(values, "/,/")
+
+	// 	} else {
+	// 		for _, value := range values {
+	// 			headers[name] = value
+	// 		}
+	// 	}
+	// }
 }
 
-// Queue queues request in worker pool
-func (client CycleTLS) Queue(URL string, options Options, Method string) {
-
-	options.URL = URL
-	options.Method = Method
-	//TODO add timestamp to request
-	opt := cycleTLSRequest{"Queued Request", options}
-	response := processRequest(opt)
-	client.ReqChan <- response
-}
-
-// Do creates a single request
-func (client CycleTLS) Do(URL string, options Options, Method string) (response Response, err error) {
-
-	options.URL = URL
-	options.Method = Method
-	opt := cycleTLSRequest{"cycleTLSRequest", options}
-
-	res := processRequest(opt)
-	response, err = dispatcher(res)
-	if err != nil {
-		log.Print("Request Failed: " + err.Error())
-		return response, err
-	}
-
-	return response, nil
-}
-
-//TODO rename this
-
-// Init starts the worker pool or returns a empty cycletls struct
-func Init(workers ...bool) CycleTLS {
-	if len(workers) > 0 && workers[0] {
-		reqChan := make(chan fullRequest)
-		respChan := make(chan Response)
-		go workerPool(reqChan, respChan)
-		log.Println("Worker Pool Started")
-
-		return CycleTLS{ReqChan: reqChan, RespChan: respChan}
-	}
-	return CycleTLS{}
-
-}
-
-// Close closes channels
-func (client CycleTLS) Close() {
-	close(client.ReqChan)
-	close(client.RespChan)
-
-}
-
-// Worker Pool
-func workerPool(reqChan chan fullRequest, respChan chan Response) {
-	//MAX
-	for i := 0; i < 100; i++ {
-		go worker(reqChan, respChan)
-	}
-}
-
-// Worker
-func worker(reqChan chan fullRequest, respChan chan Response) {
-	for res := range reqChan {
-		response, err := dispatcher(res)
-		if err != nil {
-			log.Print("Request Failed: " + err.Error())
-		}
-		respChan <- response
-	}
-}
-
-func readSocket(reqChan chan fullRequest, c *websocket.Conn) {
+func readSocket(chanRead chan fullRequest, wsSocket *websocket.Conn) {
 	for {
-		_, message, err := c.ReadMessage()
+		_, message, err := wsSocket.ReadMessage()
+
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				return
@@ -287,37 +252,34 @@ func readSocket(reqChan chan fullRequest, c *websocket.Conn) {
 			log.Print("Socket Error", err)
 			return
 		}
-		request := new(cycleTLSRequest)
 
+		request := new(cycleTLSRequest)
 		err = json.Unmarshal(message, &request)
+
 		if err != nil {
 			log.Print("Unmarshal Error", err)
 			return
 		}
 
-		reply := processRequest(*request)
-
-		reqChan <- reply
+		chanRead <- processRequest(*request)
 	}
 }
 
-func writeSocket(respChan chan Response, c *websocket.Conn) {
-	for {
-		select {
-		case r := <-respChan:
-			message, err := json.Marshal(r)
-			if err != nil {
-				log.Print("Marshal Json Failed" + err.Error())
-				continue
-			}
-			err = c.WriteMessage(websocket.TextMessage, message)
-			if err != nil {
-				log.Print("Socket WriteMessage Failed" + err.Error())
-				continue
-			}
+// Worker
+func readProcess(chanRead chan fullRequest, chanWrite chan []byte) {
+	for request := range chanRead {
+		go dispatcherAsync(request, chanWrite)
+	}
+}
 
+func writeSocket(chanWrite chan []byte, wsSocket *websocket.Conn) {
+	for buf := range chanWrite {
+		err := wsSocket.WriteMessage(websocket.BinaryMessage, buf)
+
+		if err != nil {
+			log.Print("Socket WriteMessage Failed" + err.Error())
+			continue
 		}
-
 	}
 }
 
@@ -354,17 +316,17 @@ func WSEndpoint(w nhttp.ResponseWriter, r *nhttp.Request) {
 		}
 		log.Println(headers)
 		log.Println(body)
+
 	} else {
-		reqChan := make(chan fullRequest)
-		respChan := make(chan Response)
-		go workerPool(reqChan, respChan)
+		chanRead := make(chan fullRequest)
+		chanWrite := make(chan []byte)
 
-		go readSocket(reqChan, ws)
-		//run as main thread
-		writeSocket(respChan, ws)
+		go readSocket(chanRead, ws)
+		go readProcess(chanRead, chanWrite)
 
+		// Run as main thread
+		writeSocket(chanWrite, ws)
 	}
-
 }
 
 func setupRoutes() {
