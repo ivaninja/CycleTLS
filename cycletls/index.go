@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
-	http "github.com/Danny-Dasilva/fhttp"
-	"github.com/gorilla/websocket"
-	"io/ioutil"
+	"io"
 	"log"
 	nhttp "net/http"
 	"net/url"
 	"os"
 	"runtime"
 	"strings"
+
+	http "github.com/Danny-Dasilva/fhttp"
+	"github.com/gorilla/websocket"
 )
 
 // Options sets CycleTLS client options
@@ -145,10 +146,10 @@ func processRequest(request cycleTLSRequest) (result fullRequest) {
 			req.Header.Set(k, v)
 		}
 	}
+
 	req.Header.Set("Host", u.Host)
 	req.Header.Set("user-agent", request.Options.UserAgent)
 	return fullRequest{req: req, client: client, options: request}
-
 }
 
 // func dispatcher(res fullRequest) {
@@ -191,54 +192,125 @@ func processRequest(request cycleTLSRequest) (result fullRequest) {
 // 	Response{res.options.RequestID, resp.StatusCode, Body, headers}
 // }
 
-
 func dispatcherAsync(res fullRequest, chanWrite chan []byte) {
 	defer res.client.CloseIdleConnections()
 
-	var b bytes.Buffer
-
-	b.Write([]byte(res.options.RequestID))
-
-	chanWrite <- b.Bytes();
-
 	// @TODO: When does this trigger an error ?
 	// Are we sure that the parsedError will include headers and a satus code ?
-	// resp, err := res.client.Do(res.req)
+	resp, err := res.client.Do(res.req)
 
-	// if err != nil {
+	if err != nil {
+		parsedError := parseError(err)
 
-	// 	parsedError := parseError(err)
+		{
+			var b bytes.Buffer
+			var requestIDLength = len(res.options.RequestID)
 
-	// 	headers := make(map[string]string)
+			b.WriteByte(byte(requestIDLength >> 8))
+			b.WriteByte(byte(requestIDLength))
+			b.WriteString(res.options.RequestID)
+			b.WriteByte(0)
+			b.WriteByte(5)
+			b.WriteString("error")
+			b.WriteByte(byte(parsedError.StatusCode >> 8))
+			b.WriteByte(byte(parsedError.StatusCode))
 
-	// 	// return Response{res.options.RequestID, parsedError.StatusCode, parsedError.ErrorMsg + "-> \n" + string(err.Error()), headers}, nil //normally return error here
-	// 	return;
-	// }
+			var message = parsedError.ErrorMsg + "-> \n" + string(err.Error())
+			var messageLength = len(res.options.RequestID)
 
-	// defer resp.Body.Close()
+			b.WriteByte(byte(messageLength >> 8))
+			b.WriteByte(byte(messageLength))
+			b.WriteString(message)
 
-	// encoding := resp.Header["Content-Encoding"]
-	// content := resp.Header["Content-Type"]
+			chanWrite <- b.Bytes()
+		}
 
-	// bodyBytes, err := ioutil.ReadAll(resp.Body)
-	// if err != nil {
-	// 	log.Print("Parse Bytes" + err.Error())
-	// 	return response, err
-	// }
+		return
+	}
 
-	// Body := DecompressBody(bodyBytes, encoding, content)
-	// headers := make(map[string]string)
+	{
+		var b bytes.Buffer
+		var headerLength = len(resp.Header)
+		var requestIDLength = len(res.options.RequestID)
 
-	// for name, values := range resp.Header {
-	// 	if name == "Set-Cookie" {
-	// 		headers[name] = strings.Join(values, "/,/")
+		b.WriteByte(byte(requestIDLength >> 8))
+		b.WriteByte(byte(requestIDLength))
+		b.WriteString(res.options.RequestID)
+		b.WriteByte(0)
+		b.WriteByte(8)
+		b.WriteString("response")
+		b.WriteByte(byte(resp.StatusCode >> 8))
+		b.WriteByte(byte(resp.StatusCode))
+		b.WriteByte(byte(headerLength >> 8))
+		b.WriteByte(byte(headerLength))
 
-	// 	} else {
-	// 		for _, value := range values {
-	// 			headers[name] = value
-	// 		}
-	// 	}
-	// }
+		for name, values := range resp.Header {
+			var nameLength = len(name)
+			var valuesLength = len(values)
+
+			b.WriteByte(byte(nameLength >> 8))
+			b.WriteByte(byte(nameLength))
+			b.WriteString(name)
+			b.WriteByte(byte(valuesLength >> 8))
+			b.WriteByte(byte(valuesLength))
+
+			for _, value := range values {
+				var valueLength = len(value)
+
+				b.WriteByte(byte(valueLength >> 8))
+				b.WriteByte(byte(valueLength))
+				b.WriteString(value)
+			}
+		}
+
+		chanWrite <- b.Bytes()
+	}
+
+	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
+
+	if err != nil {
+		log.Print("Parse Bytes" + err.Error())
+		return
+	}
+
+	{
+		var b bytes.Buffer
+		var requestIDLength = len(res.options.RequestID)
+		var bodyBytesLength = len(bodyBytes)
+
+		b.WriteByte(byte(requestIDLength >> 8))
+		b.WriteByte(byte(requestIDLength))
+		b.WriteString(res.options.RequestID)
+		b.WriteByte(0)
+		b.WriteByte(4)
+		b.WriteString("data")
+		b.WriteByte(byte(bodyBytesLength >> 56))
+		b.WriteByte(byte(bodyBytesLength >> 48))
+		b.WriteByte(byte(bodyBytesLength >> 40))
+		b.WriteByte(byte(bodyBytesLength >> 32))
+		b.WriteByte(byte(bodyBytesLength >> 24))
+		b.WriteByte(byte(bodyBytesLength >> 16))
+		b.WriteByte(byte(bodyBytesLength >> 8))
+		b.WriteByte(byte(bodyBytesLength))
+		b.Write(bodyBytes)
+
+		chanWrite <- b.Bytes()
+	}
+
+	{
+		var b bytes.Buffer
+		var requestIDLength = len(res.options.RequestID)
+
+		b.WriteByte(byte(requestIDLength >> 8))
+		b.WriteByte(byte(requestIDLength))
+		b.WriteString(res.options.RequestID)
+		b.WriteByte(0)
+		b.WriteByte(3)
+		b.WriteString("end")
+
+		chanWrite <- b.Bytes()
+	}
 }
 
 func readSocket(chanRead chan fullRequest, wsSocket *websocket.Conn) {
@@ -298,7 +370,7 @@ func WSEndpoint(w nhttp.ResponseWriter, r *nhttp.Request) {
 	if err != nil {
 		//Golang Received a non-standard request to this port, printing request
 		var data map[string]interface{}
-		bodyBytes, err := ioutil.ReadAll(r.Body)
+		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Print("Invalid Request: Body Read Error" + err.Error())
 		}
