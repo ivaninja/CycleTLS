@@ -1,6 +1,6 @@
 {
   "name": "cycletls",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "Spoof TLS/JA3 fingerprint in JS with help from Go",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,6 @@
     "build:go": "concurrently npm:build:go:*",
     "build": "tsc",
     "prebuild:go": "cd src && cross-env GO111MODULE=on go get github.com/Danny-Dasilva/CycleTLS/cycletls",
-    "prepare": "npm run build && npm run build:go",
     "test": "jest"
   },
   "repository": {
