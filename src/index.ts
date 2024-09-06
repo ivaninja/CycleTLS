@@ -78,7 +78,7 @@ process.on("SIGINT", () => cleanExit());
 process.on("SIGTERM", () => cleanExit());
 
 const handleSpawn = (debug: boolean, fileName: string, port: number, filePath?: string) => {
-  const execPath = filePath ? `"${filePath}"` : `"${path.join(__dirname, fileName)}"`;
+  const execPath = filePath ?? path.join(__dirname, fileName);
   child = spawn(execPath, {
     env: { WS_PORT: port.toString() },
     shell: false,
