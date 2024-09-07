@@ -54,9 +54,15 @@ export interface CycleTLSRequestOptions {
 
 export interface CycleTLSResponse {
   status: number;
-  body: string | {
-    [key: string]: any;
-  };
+  body:
+    | string
+    | {
+        [key: string]: any;
+      };
+  text: () => Promise<any>;
+  raw: () => Promise<any>;
+  json: () => Promise<any>;
+
   headers: {
     [key: string]: any;
   };
