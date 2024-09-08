@@ -40,6 +40,9 @@ export interface CycleTLSResponse {
     body: string | {
         [key: string]: any;
     };
+    text: () => Promise<any>;
+    raw: () => Promise<any>;
+    json: () => Promise<any>;
     headers: {
         [key: string]: any;
     };
